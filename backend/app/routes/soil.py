@@ -9,22 +9,6 @@ from app.data.district_lookup import get_soil_by_district
 import joblib, os, numpy as np, json
 
 router = APIRouter()
-@router.get("/test-groq")
-async def test_groq():
-    import os
-    from dotenv import load_dotenv
-    load_dotenv()
-    
-    key = os.getenv("GROQ_API_KEY", "")
-    provider = os.getenv("LLM_PROVIDER", "")
-    model = os.getenv("GROQ_MODEL", "")
-    
-    return {
-        "provider": provider,
-        "model": model,
-        "key_set": bool(key),
-        "key_preview": key[:8] + "..." if key else "EMPTY"
-    }
 
 # ── Model paths ──────────────────────────────────────────────
 BASE = os.path.join(os.path.dirname(__file__), "../models")
@@ -176,14 +160,30 @@ async def analyze_soil(input: SoilInput):
     moisture = input.moisture  if input.moisture is not None else defaults["moisture"]
     OC  = input.organic_carbon if input.organic_carbon is not None else defaults["organic_carbon"]
 
-    # Micronutrient defaults (used for fertility model)
-    EC  = input.EC  if input.EC  is not None else 0.5
-    S   = input.S   if input.S   is not None else 10.0
-    Zn  = input.Zn  if input.Zn  is not None else 0.5
-    Fe  = input.Fe  if input.Fe  is not None else 0.5
-    Cu  = input.Cu  if input.Cu  is not None else 0.5
-    Mn  = input.Mn  if input.Mn  is not None else 5.0
-    B   = input.B   if input.B   is not None else 0.5
+    # NEW - realistic defaults based on soil type
+    MICRONUTRIENT_DEFAULTS = {
+        "Alluvial Soil":       {"EC": 0.62, "S": 15.0, "Zn": 0.8,  "Fe": 4.5, "Cu": 1.2, "Mn": 8.0,  "B": 0.6},
+        "Black Cotton Soil":   {"EC": 0.75, "S": 18.0, "Zn": 0.6,  "Fe": 5.2, "Cu": 1.5, "Mn": 10.0, "B": 0.8},
+        "Red Sandy Loam":      {"EC": 0.45, "S": 10.0, "Zn": 0.5,  "Fe": 6.0, "Cu": 0.9, "Mn": 6.0,  "B": 0.4},
+        "Red Loam":            {"EC": 0.48, "S": 11.0, "Zn": 0.55, "Fe": 5.8, "Cu": 1.0, "Mn": 6.5,  "B": 0.45},
+        "Medium Black Soil":   {"EC": 0.70, "S": 16.0, "Zn": 0.65, "Fe": 4.8, "Cu": 1.3, "Mn": 9.0,  "B": 0.7},
+        "Sandy Arid Soil":     {"EC": 0.35, "S": 7.0,  "Zn": 0.35, "Fe": 3.0, "Cu": 0.6, "Mn": 4.0,  "B": 0.3},
+        "Desert Sandy Soil":   {"EC": 0.28, "S": 5.0,  "Zn": 0.28, "Fe": 2.5, "Cu": 0.5, "Mn": 3.0,  "B": 0.25},
+        "Loamy Soil":          {"EC": 0.55, "S": 13.0, "Zn": 0.65, "Fe": 4.2, "Cu": 1.1, "Mn": 7.5,  "B": 0.55},
+    }
+
+    DEFAULT_MICRO = {"EC": 0.55, "S": 13.0, "Zn": 0.65, "Fe": 4.2, "Cu": 1.1, "Mn": 7.5, "B": 0.55}
+
+    soil_type = defaults.get("soil_type", "Loamy Soil")
+    micro = MICRONUTRIENT_DEFAULTS.get(soil_type, DEFAULT_MICRO)
+
+    EC = input.EC if input.EC is not None else micro["EC"]
+    S  = input.S  if input.S  is not None else micro["S"]
+    Zn = input.Zn if input.Zn is not None else micro["Zn"]
+    Fe = input.Fe if input.Fe is not None else micro["Fe"]
+    Cu = input.Cu if input.Cu is not None else micro["Cu"]
+    Mn = input.Mn if input.Mn is not None else micro["Mn"]
+    B  = input.B  if input.B  is not None else micro["B"]
 
     soil_data = {
         "N": N, "P": P, "K": K, "pH": pH,

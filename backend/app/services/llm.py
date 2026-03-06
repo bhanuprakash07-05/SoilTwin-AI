@@ -1,11 +1,26 @@
 import os
+from pathlib import Path
+from tkinter.filedialog import Open
+from dotenv import load_dotenv
+
+# Force load .env from backend root regardless of where uvicorn is run from
+env_path = Path(__file__).resolve().parents[2] / ".env"
+load_dotenv(dotenv_path=env_path)
+
+# print(f"[LLM] Loading .env from: {env_path}")
+# print(f"[LLM] Provider: {os.getenv('LLM_PROVIDER')}")
+# print(f"[LLM] Key set: {bool(os.getenv('GROQ_API_KEY'))}")
+
+
+
+import os
 from groq import Groq
 from dotenv import load_dotenv
 
 load_dotenv()
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
-GROQ_MODEL = os.getenv("GROQ_MODEL", "meta-llama/llama-3.3-70b-versatile")
+GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 
 client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 
