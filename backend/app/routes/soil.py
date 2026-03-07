@@ -120,19 +120,44 @@ def predict_yield(crop: str, rainfall_mm: float, avg_temp: float) -> dict:
 
 # ── Helper: Fertility Prediction ─────────────────────────────
 def predict_fertility(N, P, K, pH, OC,
-                      EC=0.5, S=10.0, Zn=0.5,
-                      Fe=0.5, Cu=0.5, Mn=5.0, B=0.5) -> dict:
-    if not fertility_model or not fertility_scaler:
-        return {"fertility_level": "Unknown", "fertility_score": 1}
+                      EC=0.55, S=13.0, Zn=0.27,
+                      Fe=0.62, Cu=1.10, Mn=7.5, B=0.55,
+                      health_score=None) -> dict:
 
-    features = np.array([[N, P, K, pH, EC, OC, S, Zn, Fe, Cu, Mn, B]])
-    scaled   = fertility_scaler.transform(features)
-    pred     = int(fertility_model.predict(scaled)[0])
-    proba    = fertility_model.predict_proba(scaled)[0]
+    # The fertility dataset uses different N/K scales (N:138-323, K:338-718)
+    # Our crop inputs are outside that distribution, so we use health score
+    # as the primary signal with ML as a secondary check
+
+    score = health_score or 50
+
+    if score >= 75:
+        pred = 2  # Highly Fertile
+        proba = [0.05, 0.20, 0.75]
+    elif score >= 55:
+        pred = 1  # Fertile
+        proba = [0.15, 0.72, 0.13]
+    else:
+        pred = 0  # Less Fertile
+        proba = [0.70, 0.25, 0.05]
+
+    # Refine using ML only when inputs are in training range
+    if fertility_model and fertility_scaler:
+        if 138 <= N <= 340 and 330 <= K <= 730 and 7.0 <= pH <= 8.0:
+            try:
+                features = np.array([[N, P, K, pH, EC, OC, S, Zn, Fe, Cu, Mn, B]])
+                scaled = fertility_scaler.transform(features)
+                ml_pred = int(fertility_model.predict(scaled)[0])
+                ml_proba = fertility_model.predict_proba(scaled)[0]
+                # Only trust ML if it agrees within one level of health score
+                if abs(ml_pred - pred) <= 1:
+                    pred = ml_pred
+                    proba = ml_proba.tolist()
+            except Exception:
+                pass  # keep health-score-based prediction
 
     return {
         "fertility_level": FERTILITY_LABELS[pred],
-        "fertility_score": pred,                        # 0/1/2
+        "fertility_score": pred,
         "confidence_pct": round(float(proba[pred]) * 100, 1),
         "probabilities": {
             "less_fertile":   round(float(proba[0]) * 100, 1),
@@ -140,7 +165,6 @@ def predict_fertility(N, P, K, pH, OC,
             "highly_fertile": round(float(proba[2]) * 100, 1),
         }
     }
-
 
 # ── Routes ───────────────────────────────────────────────────
 @router.get("/district-defaults")
@@ -160,20 +184,18 @@ async def analyze_soil(input: SoilInput):
     moisture = input.moisture  if input.moisture is not None else defaults["moisture"]
     OC  = input.organic_carbon if input.organic_carbon is not None else defaults["organic_carbon"]
 
-    # NEW - realistic defaults based on soil type
     MICRONUTRIENT_DEFAULTS = {
-        "Alluvial Soil":       {"EC": 0.62, "S": 15.0, "Zn": 0.8,  "Fe": 4.5, "Cu": 1.2, "Mn": 8.0,  "B": 0.6},
-        "Black Cotton Soil":   {"EC": 0.75, "S": 18.0, "Zn": 0.6,  "Fe": 5.2, "Cu": 1.5, "Mn": 10.0, "B": 0.8},
-        "Red Sandy Loam":      {"EC": 0.45, "S": 10.0, "Zn": 0.5,  "Fe": 6.0, "Cu": 0.9, "Mn": 6.0,  "B": 0.4},
-        "Red Loam":            {"EC": 0.48, "S": 11.0, "Zn": 0.55, "Fe": 5.8, "Cu": 1.0, "Mn": 6.5,  "B": 0.45},
-        "Medium Black Soil":   {"EC": 0.70, "S": 16.0, "Zn": 0.65, "Fe": 4.8, "Cu": 1.3, "Mn": 9.0,  "B": 0.7},
-        "Sandy Arid Soil":     {"EC": 0.35, "S": 7.0,  "Zn": 0.35, "Fe": 3.0, "Cu": 0.6, "Mn": 4.0,  "B": 0.3},
-        "Desert Sandy Soil":   {"EC": 0.28, "S": 5.0,  "Zn": 0.28, "Fe": 2.5, "Cu": 0.5, "Mn": 3.0,  "B": 0.25},
-        "Loamy Soil":          {"EC": 0.55, "S": 13.0, "Zn": 0.65, "Fe": 4.2, "Cu": 1.1, "Mn": 7.5,  "B": 0.55},
-    }
+    "Alluvial Soil":     {"EC": 0.62, "S": 15.0, "Zn": 0.30, "Fe": 0.75, "Cu": 1.20, "Mn": 8.0,  "B": 0.60},
+    "Black Cotton Soil": {"EC": 0.75, "S": 18.0, "Zn": 0.28, "Fe": 0.65, "Cu": 1.50, "Mn": 10.0, "B": 0.80},
+    "Red Sandy Loam":    {"EC": 0.45, "S": 10.0, "Zn": 0.25, "Fe": 0.55, "Cu": 0.90, "Mn": 6.0,  "B": 0.40},
+    "Red Loam":          {"EC": 0.48, "S": 11.0, "Zn": 0.26, "Fe": 0.58, "Cu": 1.00, "Mn": 6.5,  "B": 0.45},
+    "Medium Black Soil": {"EC": 0.70, "S": 16.0, "Zn": 0.29, "Fe": 0.70, "Cu": 1.30, "Mn": 9.0,  "B": 0.70},
+    "Sandy Arid Soil":   {"EC": 0.35, "S": 7.0,  "Zn": 0.20, "Fe": 0.35, "Cu": 0.60, "Mn": 4.0,  "B": 0.30},
+    "Desert Sandy Soil": {"EC": 0.28, "S": 5.0,  "Zn": 0.18, "Fe": 0.30, "Cu": 0.50, "Mn": 3.0,  "B": 0.25},
+    "Loamy Soil":        {"EC": 0.55, "S": 13.0, "Zn": 0.27, "Fe": 0.62, "Cu": 1.10, "Mn": 7.5,  "B": 0.55},
+}
 
-    DEFAULT_MICRO = {"EC": 0.55, "S": 13.0, "Zn": 0.65, "Fe": 4.2, "Cu": 1.1, "Mn": 7.5, "B": 0.55}
-
+    DEFAULT_MICRO = {"EC": 0.55, "S": 13.0, "Zn": 0.27, "Fe": 0.62, "Cu": 1.10, "Mn": 7.5, "B": 0.55}
     soil_type = defaults.get("soil_type", "Loamy Soil")
     micro = MICRONUTRIENT_DEFAULTS.get(soil_type, DEFAULT_MICRO)
 
@@ -236,7 +258,8 @@ async def analyze_soil(input: SoilInput):
         ]
 
     # ── Step 5: Model 2 — Soil Fertility ─────────────────────
-    fertility = predict_fertility(N, P, K, pH, OC, EC, S, Zn, Fe, Cu, Mn, B)
+    fertility = predict_fertility(N, P, K, pH, OC, EC, S, Zn, Fe, Cu, Mn, B,
+                              health_score=health["score"])
 
     # ── Step 6: Model 3 — Yield Prediction ───────────────────
     yield_data = predict_yield(
